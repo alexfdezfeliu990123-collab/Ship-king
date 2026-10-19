@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>NaviMar · Navegación marítima</title>
 <link rel="manifest" href="manifest.json"><meta name="theme-color" content="#0b1a2b">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"><script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
 --bg:#0b1a2b;--panel:#12263d;--line:#23405f;--tx:#e6f1fb;--mut:#8fa9c4;--ac:#2fd0c4;--warn:#ff9f43;--bad:#ff5d5d;color-scheme:dark}
@@ -51,6 +52,17 @@ button{cursor:pointer}button.on{background:var(--ac);color:#04201e;border-color:
 .note{font-size:11px;color:var(--mut);margin-top:8px}
 .st{font-size:12px;padding:4px 9px;border-radius:8px;border:1px solid var(--line)}
 .al.i{background:#2b7de9}
+.hud,.legend,#alerts{z-index:1000}#lmap{background:#cfe6f5}
+.map.flash::after{content:'';position:absolute;inset:0;border:8px solid #ff2d2d;pointer-events:none;animation:fl .5s infinite alternate}@keyframes fl{from{opacity:.1}to{opacity:1}}
+#login,#voy{position:fixed;inset:0;background:#0b1a2bf2;display:flex;align-items:center;justify-content:center;z-index:50;padding:12px}
+#voy{display:none;align-items:flex-start;overflow:auto}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;max-width:560px;width:100%}
+.box input,.box textarea{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px;font:inherit;margin-top:3px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.role{padding:10px;text-align:left;width:100%;margin-top:6px}
+.er{color:var(--bad)}
+#cert{display:none;position:fixed;inset:0;background:#fff;color:#111;overflow:auto;padding:24px;z-index:60}#cert.show{display:block}
+@media print{body>*:not(#cert){display:none!important}#cert{position:static}.noprint{display:none}}
 </style>
 </head>
 <body>
@@ -58,12 +70,12 @@ button{cursor:pointer}button.on{background:var(--ac);color:#04201e;border-color:
   <h1>⚓ NaviMar</h1>
   <span class="coord" id="lat"></span><span class="coord" id="lon"></span>
   <span class="sp"></span>
-  <span class="st" id="net"></span><select id="port" style="width:auto"></select>
+  <span class='st' id='rolechip' style='color:var(--ac)'></span><button id='vopen'>🧾 Buque y viaje</button><button id='rmode'>🌍 Modo real</button><button id='ctr' title='Centrar en el buque'>🎯</button><button id='lout' title='Salir'>⎋</button><span class="st" id="net"></span><select id="port" style="width:auto"></select>
   <button id="gps">📍 Usar mi GPS</button>
 </header>
 <main>
   <section class="map">
-    <canvas id="map" width="880" height="660"></canvas>
+    <canvas id="map" width="880" height="660"></canvas><div id="lmap" style="position:absolute;inset:0;display:none"></div>
     <div class="hud">
       <div class="chip" id="h1"></div>
       <div class="chip" id="h2"></div>
@@ -84,6 +96,9 @@ button{cursor:pointer}button.on{background:var(--ac);color:#04201e;border-color:
       <div class="btns"><button id="b1" class="on">Profundidad</button><button id="b2">Oleaje</button><button id="b3" class="on">AIS</button></div>
     </div>
     <div class="card">
+      <h2>Seguimiento del buque</h2><div id="trk"><p class="note">Sin datos todavía.</p></div>
+    </div>
+    <div class="card">
       <h2>Puerto y fondeaderos</h2><div id="pinfo"></div>
     </div>
     <div class="card">
@@ -93,7 +108,7 @@ button{cursor:pointer}button.on{background:var(--ac);color:#04201e;border-color:
       <label>Tierra y bajos: radio de alerta <b id="lv"></b> NM</label>
       <div class="rb" id="rbl"><button data-r="0.5">0,5 NM</button><button data-r="1" class="on">1 NM</button><button data-r="2">2 NM</button><input type="number" id="lc" min="0.1" max="50" step="0.1" placeholder="Otro"><button id="lcb">OK</button></div>
       <label>Calado mínimo seguro (bajos): <b id="mv"></b> m</label><input type="range" id="md" min="2" max="30" value="8">
-      <div class="rb"><button id="snd">🔔 Sonido: no</button></div>
+      <div class="rb"><button id="snd">🔔 Sonido: no</button><button id="ntf">📲 Notificaciones: no</button><button id="wl">☀ Pantalla activa: no</button></div>
       <p class="note">Naranja: aviso. Rojo: peligro (menos de la mitad del radio o riesgo de colisión).</p>
     </div>
     <div class="card">
@@ -117,12 +132,27 @@ button{cursor:pointer}button.on{background:var(--ac);color:#04201e;border-color:
     </div>
   </aside>
 </main>
+<div id='login'><div class='box'><h2 style='margin:0 0 4px;color:var(--ac);font-size:16px'>⚓ NaviMar · Acceso a bordo</h2><b id='vst'></b>
+<label>Código del servidor (te lo da el capitán o el armador)</label><input id='srvk' type='password' autocomplete='off'>
+<p class='note'>Elige tu perfil e introduce tu PIN (la primera vez se crea).</p>
+<button class='role' data-r='cap'>👨‍✈️ Capitán</button><button class='role' data-r='pri'>🧭 Primer oficial</button><button class='role' data-r='gua'>⏱ Oficial de guardia</button><button class='role' data-r='inv'>👁 Invitado (armador): solo lectura</button>
+<div id='pinbox' style='display:none'><label id='pl'></label><input id='pin' type='password' inputmode='numeric' maxlength='8' placeholder='PIN de 4 a 8 dígitos'><button id='pgo' class='on' style='margin-top:8px'>Entrar</button> <span id='pe' class='er'></span></div>
+<p class='note'>Perfiles guardados en este dispositivo. Para ver el barco desde otro dispositivo hace falta configurar CFG.SYNC_URL.</p></div></div>
+<div id='voy'><div class='box'><div class='row'><b style='font-size:16px'>🧾 Buque y viaje</b><button id='vx'>✕ Cerrar</button></div>
+<div id='vb'><h2>Buque</h2><div class='g2'><div><label>Nombre</label><input id='vn'></div><div><label>Bandera</label><input id='vf'></div><div><label>MMSI (9 dígitos)</label><input id='vm' maxlength='9' inputmode='numeric'></div><div><label>IMO (7 dígitos)</label><input id='vi' maxlength='7' inputmode='numeric'></div><div><label>Indicativo</label><input id='vc'></div><div><label>Tipo</label><input id='vt2' placeholder='Velero, pesquero...'></div><div><label>Armador / empresa</label><input id='vco'></div></div>
+<div class='btns' style='margin-top:8px'><button id='vval'>✔ Validar buque</button><button id='vgps'>📍 Validar a bordo (GPS)</button></div><div id='vres' class='note'></div>
+<div id='vcrewbox'><h2 style='margin-top:14px'>Datos del viaje</h2><div class='g2'><div><label>Origen</label><input id='vo'></div><div><label>Destino</label><input id='vd'></div><div><label>Combustible inicio (L)</label><input id='f0' type='number'></div><div><label>Combustible fin (L)</label><input id='f1' type='number'></div><div><label>Pasajeros / carga</label><input id='vp'></div><div><label>Agua dulce (L)</label><input id='vw' type='number'></div></div>
+<label>Tripulación (una por línea: Nombre — Rango)</label><textarea id='vcr' rows='4'></textarea><label>Observaciones</label><textarea id='vob' rows='2'></textarea></div></div>
+<h2 style='margin-top:14px'>Viaje y bitácora</h2><div class='btns'><button id='tstart'>▶ Iniciar viaje</button><button id='tstop'>■ Finalizar viaje</button></div>
+<div class='rb'><input id='vlg' placeholder='Anotación de bitácora' style='flex:1;width:auto'><button id='tlog'>✎ Anotar</button></div>
+<div id='vstat' style='margin-top:8px'></div><div class='btns' style='margin-top:10px'><button id='tcert' class='on'>📄 Generar certificado</button></div></div></div>
+<div id='cert'></div>
 <script>
 (function(){
 "use strict";
 const $=id=>document.getElementById(id);
-const CFG={AIS_URL:""}; // URL de tu proxy AIS (JSON: name,mmsi,lat,lon,cog,sog). Vacío = buques simulados
-const PI={Barcelona:{c:[41.3515,2.17],cc:"ESBCN",k:"Comercial, crucero y deportivo"},Valencia:{c:[39.444,-0.317],cc:"ESVLC",k:"Comercial y deportivo"},Palma:{c:[39.56,2.635],cc:"ESPMI",k:"Ferry, crucero y deportivo"},Marsella:{c:[43.295,5.35],cc:"FRMRS",k:"Comercial y crucero"}};
+const CFG={AIS_URL:"",SYNC_URL:"",PUSH_URL:"",PUSH_KEY:"",SERVER:""}; // SERVER: URL de tu servidor NaviMar (carpeta server/) // URL de tu proxy AIS (JSON: name,mmsi,lat,lon,cog,sog). Vacío = buques simulados
+const PI={Barcelona:{c:[41.3515,2.17],cc:"ESBCN",k:"Comercial, crucero y deportivo"},Valencia:{c:[39.444,-0.317],cc:"ESVLC",k:"Comercial y deportivo"},Palma:{c:[39.56,2.635],cc:"ESPMI",k:"Ferry, crucero y deportivo"},Marsella:{c:[43.295,5.35],cc:"FRMRS",k:"Comercial y crucero"},"Santo Domingo":{c:[18.47,-69.88],cc:"DOSDQ",k:"Comercial y deportivo (ubicación aprox.)"},"La Romana / Casa de Campo":{c:[18.41,-68.95],cc:"DOLRM",k:"Marina deportiva (ubicación aprox.)"},"Puerto Plata":{c:[19.8,-70.69],cc:"DOPOP",k:"Comercial y crucero (ubicación aprox.)"},"Samaná":{c:[19.2,-69.33],cc:"—",k:"Deportivo y turístico (ubicación aprox.)"}};
 const PORTS={};for(const k in PI)PORTS[k]=PI[k].c;
 const S={lat:41.3515,lon:2.17,x:0,y:0,hd:70,sp:12,zm:12,depth:true,waves:false,ais:true,t:0,route:1};
 const D2R=Math.PI/180;S.rv=3;S.rl=1;S.md=8;S.near=new Set();S.snd=false;S.beepNeed=false;S.hit=null;S.wk=1;S.wx=null;S.port=null;S.anch=[];S.lastAis=Date.now();
@@ -133,7 +163,7 @@ return h(xi,yi)*(1-u)*(1-v)+h(xi+1,yi)*u*(1-v)+h(xi,yi+1)*(1-u)*v+h(xi+1,yi+1)*u
 function elev(x,y){let e=vn(x*.09+5,y*.09)*.6+vn(x*.25,y*.25)*.3+vn(x*.7,y*.7)*.1;
 e-=Math.max(0,1-Math.hypot(x,y)/7)*.35; e+=Math.max(0,Math.min(1,(y-14)/30))*.25; return e}
 const SEA=.62;
-function depthAt(x,y){const e=elev(x,y);return e>=SEA?-1:Math.pow((SEA-e)/.42,1.4)*400}
+function depthAt(x,y){if(S.real)return 100;const e=elev(x,y);return e>=SEA?-1:Math.pow((SEA-e)/.42,1.4)*400}
 // ---------- colores ----------
 const STOPS=[[0,[159,227,240]],[5,[110,198,230]],[20,[63,155,214]],[50,[43,111,184]],[100,[31,74,150]],[200,[20,40,107]],[400,[10,18,62]]];
 function dcol(d){if(d<0)return[205,191,143];for(let i=1;i<STOPS.length;i++){if(d<=STOPS[i][0]){const a=STOPS[i-1],b=STOPS[i],f=(d-a[0])/(b[0]-a[0]);
@@ -165,9 +195,9 @@ const TYPES=[["Carguero","#ffb347"],["Pasajeros","#5db9ff"],["Pesquero","#7ee081
 const V=NAMES.map((n,i)=>{const t=TYPES[i%5],a=Math.random()*6.28,r=3+Math.random()*10;
 return{n,mmsi:224000000+Math.floor(Math.random()*999999),t:t[0],c:t[1],x:Math.cos(a)*r,y:Math.sin(a)*r,hd:Math.random()*360,sp:t[0]=="Velero"?5:6+Math.random()*12}});
 let alertMsg="";
-function stepVessels(dt){const k=dt*30/3600;
+function stepVessels(dt){const k=dt*(S.real?1:30)/3600;
 for(const v of V){v.x+=Math.sin(v.hd*D2R)*v.sp*k;v.y+=Math.cos(v.hd*D2R)*v.sp*k;
-if(depthAt(v.x,v.y)<0||Math.hypot(v.x-S.x,v.y-S.y)>20)v.hd=(v.hd+120)%360}}
+if(!S.real&&(depthAt(v.x,v.y)<0||Math.hypot(v.x-S.x,v.y-S.y)>20))v.hd=(v.hd+120)%360}}
 function drawVessels(){
 for(const v of V){const[px,py]=toPx(v.x,v.y);cx.save();cx.translate(px,py);cx.rotate(v.hd*D2R);
 cx.fillStyle=v.c;cx.strokeStyle="#000";cx.lineWidth=1;cx.beginPath();cx.moveTo(0,-9);cx.lineTo(6,7);cx.lineTo(-6,7);cx.closePath();cx.fill();cx.stroke();cx.restore();
@@ -183,7 +213,8 @@ if(inR.length){const n=inR[0];msgs.push([n.d<S.rv/2?"d":"w",`🚢 ${n.v.n} a ${n
 if(c)msgs.push(["d",`⚠ Riesgo de colisión: ${c.v.n} · CPA ${c.cpa.toFixed(2)} NM en ${c.tc.toFixed(0)} min`]);
 const lg=landScan();if(lg)msgs.push([lg.dist<S.rl/2?"d":"w",lg.txt]);
 const inA=S.anch.find(q=>Math.hypot(q.x-S.x,q.y-S.y)<=q.r);if(inA)msgs.push(["i","⚓ En zona de fondeo: "+inA.n+" ("+inA.d.toFixed(0)+" m)"]);
-S.beepNeed=msgs.some(m=>m[0]=="d");
+if(S.drag)msgs.push(['d','⚓ ¡Garreo! El barco se ha movido fuera del círculo de fondeo']);const ad=advise(rows);S.adv=ad;if(ad)msgs.push(["i","💡 "+ad.txt]);
+S.beepNeed=msgs.some(m=>m[0]=="d");if(S.beepNeed&&!S.wasd&&DB.voy&&!DB.voy.end)DB.voy.al++;const fresh=S.beepNeed&&!S.wasd;S.wasd=S.beepNeed;fx(msgs,ad,fresh);
 $("alerts").innerHTML=msgs.map(m=>`<div class="al ${m[0]}">${m[1]}</div>`).join("");beep();
 }
 function landScan(){let best=null;const step=Math.max(.05,S.rl/24);
@@ -192,7 +223,7 @@ S.hit=best;if(!best)return null;
 const rel=((best.b-S.hd+540)%360)-180,ahead=Math.abs(rel)<35?" · por la proa":"";
 return{dist:best.dist,txt:(best.land?"🏝 Tierra":"⚠ Bajo (<"+S.md+" m)")+` a ${best.dist.toFixed(1)} NM (rbl ${Math.round(best.b)}°)${ahead}`}}
 let ac=null,lastBeep=0;
-function beep(){if(!S.snd||!S.beepNeed||!ac)return;const n=performance.now();if(n-lastBeep<2000)return;lastBeep=n;try{const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=880;g.gain.value=.08;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+.25)}catch(e){}}
+function beep(){if(!S.snd||!S.beepNeed||!ac)return;const n=performance.now();if(n-lastBeep<(ROLE=='gua'?900:2000))return;lastBeep=n;try{const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=ROLE=='gua'&&Math.round(n/900)%2?1180:880;g.gain.value=ROLE=='gua'?.3:.08;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+.25)}catch(e){}}
 function drawAlerts(){const[px,py]=toPx(S.x,S.y),u=toPx(S.x+1,S.y)[0]-px;
 cx.lineWidth=2;cx.setLineDash([4,6]);
 cx.strokeStyle="#5dd6ff";cx.beginPath();cx.arc(px,py,S.rv*u,0,6.28);cx.stroke();
@@ -200,7 +231,7 @@ cx.strokeStyle="#ff9f43";cx.beginPath();cx.arc(px,py,S.rl*u,0,6.28);cx.stroke();
 cx.font="11px system-ui";cx.fillStyle="#5dd6ff";cx.fillText("Buques "+S.rv+" NM",px+4,py-S.rv*u-4);cx.fillStyle="#ff9f43";cx.fillText("Tierra/bajos "+S.rl+" NM",px+4,py+S.rl*u+12);
 if(S.hit){const[hx,hy]=toPx(S.hit.x,S.hit.y);cx.strokeStyle="#ff3b3b";cx.lineWidth=3;cx.beginPath();cx.moveTo(hx-7,hy-7);cx.lineTo(hx+7,hy+7);cx.moveTo(hx+7,hy-7);cx.lineTo(hx-7,hy+7);cx.stroke()}}
 // ---------- países, puertos, fondeaderos ----------
-function countryAt(la,lo){if(la<37.3&&lo>-2&&lo<8)return"Argelia";if(la>41.3&&la<43.1&&lo>8.4&&lo<9.8)return"Francia";if(la>=42.45&&lo<8)return"Francia";if(lo>=8)return"Italia";return"España"}
+function countryAt(la,lo){if(lo<-30){return la>17.4&&la<20.2&&lo>-71.8&&lo<-68.2?'Rep. Dominicana':la>17.8&&la<20.2&&lo>=-74.6&&lo<=-71.7?'Haití':la>17.8&&la<18.6&&lo>-67.4&&lo<-65.2?'Puerto Rico (EE. UU.)':la>19.5&&la<23.5&&lo>-85&&lo<-74?'Cuba':la>17.6&&la<18.6&&lo>-78.5&&lo<-76?'Jamaica':'Aguas internacionales (América)'}if(la<37.3&&lo>-2&&lo<8)return"Argelia";if(la>41.3&&la<43.1&&lo>8.4&&lo<9.8)return"Francia";if(la>=42.45&&lo<8)return"Francia";if(lo>=8)return"Italia";return"España"}
 function portSetup(n){let hit=null;for(let r=.5;r<=14&&!hit;r+=.25)for(let a=0;a<360;a+=15){const x=Math.sin(a*D2R)*r,y=Math.cos(a*D2R)*r;if(depthAt(x,y)<0){hit={x,y};break}}
 S.port=Object.assign({n},PI[n],hit||{x:3,y:3});S.anch=[];
 for(let a=0;a<360&&S.anch.length<3;a+=40)for(let r=2;r<=12;r+=.5){const x=Math.sin(a*D2R)*r,y=Math.cos(a*D2R)*r,d=depthAt(x,y);if(d>=6&&d<=30&&S.anch.every(q=>Math.hypot(q.x-x,q.y-y)>4)){S.anch.push({x,y,d,r:.6,n:"Fondeadero "+"ABC"[S.anch.length]});break}}}
@@ -228,11 +259,11 @@ const[m,w]=await Promise.all([fetch(`https://marine-api.open-meteo.com/v1/marine
 const mj=await m.json(),wj=await w.json();if(mj.current.wave_height==null)return;
 S.wx={wave:mj.current.wave_height,per:mj.current.wave_period,wind:wj.current.wind_speed_10m,dir:wj.current.wind_direction_10m,t:Date.now()};
 try{localStorage.setItem("nm_wx",JSON.stringify(S.wx))}catch(e){}wk();routes()}catch(e){}}
-async function aisRefresh(){if(!CFG.AIS_URL||!navigator.onLine)return;try{const la=S.lat+S.y/60,lo=S.lon+S.x/(60*Math.cos(S.lat*D2R));
-const r=await(await fetch(CFG.AIS_URL+`?lat=${la}&lon=${lo}`)).json();V.length=0;
-r.forEach(b=>V.push({n:b.name,mmsi:b.mmsi,t:b.type||"Buque",c:"#ffb347",x:(b.lon-S.lon)*60*Math.cos(S.lat*D2R),y:(b.lat-S.lat)*60,hd:b.cog||0,sp:b.sog||0}));S.lastAis=Date.now()}catch(e){}}
+async function aisRefresh(){if(!CFG.AIS_URL||!navigator.onLine||!S.real)return;try{const la=S.lat+S.y/60,lo=S.lon+S.x/(60*Math.cos(S.lat*D2R));
+const r=await(await fetch(CFG.AIS_URL+'?lat='+la+'&lon='+lo+'&r=30',{headers:H()})).json();if(!Array.isArray(r))return;V.length=0;
+r.forEach(b=>{if(String(b.mmsi)==String(DB.vessel.mmsi))return;V.push({n:b.name||('MMSI '+b.mmsi),mmsi:b.mmsi,t:TA(b.type),c:'#ffb347',x:(b.lon-S.lon)*60*Math.cos(S.lat*D2R),y:(b.lat-S.lat)*60,hd:b.cog||0,sp:b.sog||0})});S.lastAis=Date.now()}catch(e){}}
 // ---------- barco ----------
-function drawShip(){const[px,py]=toPx(S.x,S.y);cx.save();cx.translate(px,py);cx.rotate(S.hd*D2R);
+function drawShip(){drawAdv();const[px,py]=toPx(S.x,S.y);cx.save();cx.translate(px,py);cx.rotate(S.hd*D2R);
 cx.strokeStyle="rgba(255,255,255,.6)";cx.setLineDash([6,6]);cx.beginPath();cx.moveTo(0,0);cx.lineTo(0,-cv.height);cx.stroke();cx.setLineDash([]);
 cx.fillStyle="#2fd0c4";cx.strokeStyle="#04201e";cx.lineWidth=2;cx.beginPath();cx.moveTo(0,-14);cx.lineTo(9,11);cx.lineTo(0,6);cx.lineTo(-9,11);cx.closePath();cx.fill();cx.stroke();cx.restore();
 cx.strokeStyle="rgba(47,208,196,.7)";cx.lineWidth=1.5;cx.beginPath();cx.arc(px,py,toPx(S.x+1,S.y)[0]-px,0,6.28);cx.stroke()}
@@ -271,7 +302,7 @@ $("h1").textContent=`SOG ${S.sp.toFixed(1)} kn · COG ${Math.round(S.hd)}°`;$("
 function coords(){const la=S.lat+S.y/60,lo=S.lon+S.x/(60*Math.cos(S.lat*D2R));$("lat").textContent=dms(la,"N","S");$("lon").textContent=dms(lo,"E","O")}
 function legend(){const g=STOPS.slice(0,6).map(s=>`rgb(${s[1].join(",")})`).join(",");
 $("legend").innerHTML=`<b style="font-size:11px">Profundidad</b><i style="background:linear-gradient(90deg,${g})"></i><small><span>0</span><span>50</span><span>200 m</span></small>`}
-function setPort(n){const p=PORTS[n];S.lat=p[0];S.lon=p[1];S.x=0;S.y=0;portSetup(n);coords();routes();wxRefresh()}
+function setPort(n){const p=PORTS[n];if(S.real){if(LM)LM.setView(p,12);return}S.lat=p[0];S.lon=p[1];S.x=0;S.y=0;portSetup(n);coords();routes();wxRefresh()}
 Object.keys(PORTS).forEach(n=>{const o=document.createElement("option");o.textContent="Carta: "+n;o.value=n;$("port").appendChild(o)});
 $("port").onchange=e=>setPort(e.target.value);
 $("hd").oninput=e=>{S.hd=+e.target.value;$("hv").textContent=S.hd;routes()};
@@ -279,11 +310,11 @@ $("sd").oninput=e=>{S.sp=+e.target.value;$("sv").textContent=S.sp;routes()};
 $("zm").oninput=e=>{S.zm=+e.target.value;$("zv").textContent=S.zm};
 function tog(id,k){$(id).onclick=()=>{S[k]=!S[k];$(id).classList.toggle("on",S[k])}}
 tog("b3","ais");
-function setR(box,key,lab,v){S[key]=v;$(lab).textContent=v;box.querySelectorAll("button[data-r]").forEach(b=>b.classList.toggle("on",+b.dataset.r===v));ais()}
+function setR(box,key,lab,v){if(!canAlarm(v,key))return;S[key=='rv'?'bv':'bl']=v;applyAlarm();alarmSave();$(lab).textContent=v;box.querySelectorAll("button[data-r]").forEach(b=>b.classList.toggle("on",+b.dataset.r===v));ais()}
 [["rbv","rv","rv","rc","rcb"],["rbl","rl","lv","lc","lcb"]].forEach(([b,k,l,i,ok])=>{const box=$(b);
 box.querySelectorAll("button[data-r]").forEach(x=>x.onclick=()=>setR(box,k,l,+x.dataset.r));
 $(ok).onclick=()=>{const v=parseFloat($(i).value);if(v>0&&v<=50)setR(box,k,l,v)}});
-$("md").oninput=e=>{S.md=+e.target.value;$("mv").textContent=S.md;ais()};
+$("md").oninput=e=>{const v=+e.target.value;if(!(ROLE=='cap'||(ROLE=='pri'&&v>=DB.alarm.md))){e.target.value=S.md;return}S.md=v;$("mv").textContent=v;alarmSave();ais()};
 $("snd").onclick=()=>{S.snd=!S.snd;$("snd").textContent="🔔 Sonido: "+(S.snd?"sí":"no");$("snd").classList.toggle("on",S.snd);if(S.snd){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}};
 $("rv").textContent=S.rv;$("lv").textContent=S.rl;$("mv").textContent=S.md;
 $("b1").onclick=()=>{S.waves=false;$("b1").classList.add("on");$("b2").classList.remove("on");legend()};
@@ -295,10 +326,162 @@ $("hv").textContent=S.hd;$("sv").textContent=S.sp;$("zv").textContent=S.zm;legen
 let last=performance.now(),acc=0;
 function frame(now){const dt=Math.min(.1,(now-last)/1000);last=now;S.t+=dt;
 const k=dt*30/3600,nx=S.x+Math.sin(S.hd*D2R)*S.sp*k,ny=S.y+Math.cos(S.hd*D2R)*S.sp*k;
-if(depthAt(nx,ny)>1){S.x=nx;S.y=ny}else if(S.sp>0){S.sp=0;$("sd").value=0;$("sv").textContent=0}
-stepVessels(dt);renderBase();grid();drawRoute();drawPlaces();drawAlerts();if(S.ais)drawVessels();drawShip();compass();
+if(S.guest||S.real){}else if(depthAt(nx,ny)>1){S.x=nx;S.y=ny}else if(S.sp>0){S.sp=0;$("sd").value=0;$("sv").textContent=0}
+trip(dt);stepVessels(dt);renderBase();grid();drawRoute();drawPlaces();drawAlerts();if(S.ais)drawVessels();drawShip();compass();
 acc+=dt;if(acc>.4){acc=0;coords();cond();ais()}
 requestAnimationFrame(frame)}
+// ---------- perfiles, buque y viaje ----------
+const ROLES={cap:'Capitán',pri:'Primer oficial',gua:'Oficial de guardia',inv:'Invitado (armador)'};
+const P={cap:['ves','trip','log','crew'],pri:['trip','log','crew'],gua:['log'],inv:[]};
+const MID={224:'España',225:'España',226:'Francia',227:'Francia',228:'Francia',247:'Italia',232:'Reino Unido',233:'Reino Unido',211:'Alemania',244:'Países Bajos',263:'Portugal',256:'Malta',237:'Grecia',239:'Grecia',353:'Panamá',636:'Liberia',538:'Islas Marshall',327:'República Dominicana'};
+let DB={vessel:{},pins:{},voy:null,ex:{},crew:'',log:[]},ROLE=null,pick=null;
+try{Object.assign(DB,JSON.parse(localStorage.getItem('nm_db')||'{}'))}catch(e){}
+DB.vessel=Object.assign({name:'Seven Marlin',co:'Chip Seven',flag:'República Dominicana'},DB.vessel);
+function save(){try{localStorage.setItem('nm_db',JSON.stringify(DB))}catch(e){}}
+function can(a){return(P[ROLE]||[]).includes(a)}
+function esc(s){return String(s==null?'':s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]))}
+async function sha(s){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}catch(e){return btoa(unescape(encodeURIComponent(s)))}}
+function fmt(s){return Math.floor(s/3600)+' h '+String(Math.floor(s%3600/60)).padStart(2,'0')+' min'}
+$('vst').textContent=DB.vessel.name?'Buque: '+DB.vessel.name:'Buque sin registrar: entra como Capitán para configurarlo';
+document.querySelectorAll('.role').forEach(b=>b.onclick=()=>{pick=b.dataset.r;$('pinbox').style.display='block';$('pl').textContent=ROLES[pick]+(DB.pins[pick]?': introduce tu PIN':': crea un PIN nuevo');$('pin').value='';$('pe').textContent='';$('pin').focus()});
+$('pgo').onclick=async()=>{const p=$('pin').value;if(!/^[0-9]{4,8}$/.test(p)){$('pe').textContent='PIN de 4 a 8 dígitos';return}
+const h=await sha(pick+p);if(!DB.pins[pick]){DB.pins[pick]=h;save()}else if(DB.pins[pick]!==h){$('pe').textContent='PIN incorrecto';return}enter(pick)};
+function chip(){$('rolechip').textContent=ROLES[ROLE]+(DB.vessel.name?' · '+DB.vessel.name:'')}
+function enter(r){ROLE=r;$('login').style.display='none';chip();S.guest=r=='inv';roleInit();try{if($('srvk').value)localStorage.setItem('nm_key',$('srvk').value)}catch(e){}if(CFG.SERVER)setTimeout(()=>setReal(true),0);
+if(S.guest){document.querySelectorAll('aside input,aside .rb button,#port,#gps').forEach(e=>e.disabled=true);if(!CFG.SYNC_URL)$('rolechip').textContent+=' · demo local (sin SYNC_URL)'}
+if(!DB.vessel.name&&r=='cap')openVoy()}
+$('lout').onclick=()=>{if(ROLE)saveForm();location.reload()};
+$('vopen').onclick=()=>{if(ROLE)openVoy()};
+$('vx').onclick=()=>{saveForm();$('voy').style.display='none'};
+function openVoy(){const e=DB.ex||{},v=DB.vessel;
+[['vn',v.name],['vf',v.flag],['vm',v.mmsi],['vi',v.imo],['vc',v.call],['vt2',v.type],['vco',v.co],['vo',e.o||(S.port&&S.port.n)],['vd',e.d],['f0',e.f0],['f1',e.f1],['vp',e.pax],['vw',e.w],['vob',e.ob],['vcr',DB.crew]].forEach(a=>$(a[0]).value=a[1]||'');
+$('vb').style.display=ROLE=='inv'?'none':'block';
+document.querySelectorAll('#vb input,#vb textarea').forEach(x=>{x.disabled=locked(x.id);x.style.opacity=x.disabled?.6:1;x.title=x.disabled?'🔒 Dato protegido: lo introdujo un perfil superior o el viaje está sellado':''});
+$('tstart').disabled=$('tstop').disabled=!can('trip');$('tlog').disabled=$('vlg').disabled=!can('log');
+$('voy').style.display='block';vstat()}
+const FM={vn:['vessel','name'],vf:['vessel','flag'],vm:['vessel','mmsi'],vi:['vessel','imo'],vc:['vessel','call'],vt2:['vessel','type'],vco:['vessel','co'],vo:['ex','o'],vd:['ex','d'],f0:['ex','f0'],f1:['ex','f1'],vp:['ex','pax'],vw:['ex','w'],vob:['ex','ob'],vcr:['crew']};
+function locked(id){const own=DB.own&&DB.own[id],perm=['vn','vf','vm','vi','vc','vt2','vco'].includes(id)?can('ves'):can('crew');return !!(DB.voy&&DB.voy.sealed)||!perm||!!(own&&RANK[own]>RANK[ROLE])}
+function saveForm(){if(!ROLE)return;DB.own=DB.own||{};for(const id in FM){if(locked(id))continue;const a=FM[id][0],k=FM[id][1],val=$(id).value,cur=k?(DB[a]||{})[k]:DB[a];if((cur||'')===val)continue;if(k){DB[a]=DB[a]||{};DB[a][k]=val}else DB[a]=val;DB.own[id]=ROLE}
+if(DB.voy&&!DB.voy.end&&can('crew')){DB.voy.o=(DB.ex||{}).o||DB.voy.o;DB.voy.d=(DB.ex||{}).d||DB.voy.d}save();chip()}
+function imoOk(s){if(!/^[0-9]{7}$/.test(s))return false;let t=0;for(let i=0;i<6;i++)t+=+s[i]*(7-i);return t%10==+s[6]}
+$('vval').onclick=()=>{const m=$('vm').value,i=$('vi').value,c=MID[m.slice(0,3)],o=[];
+o.push(/^[0-9]{9}$/.test(m)?(c?'✔ MMSI válido · país del MID: '+c:'✔ Formato MMSI válido (MID no está en la tabla local)'):'✖ El MMSI debe tener 9 dígitos');
+o.push(i?(imoOk(i)?'✔ IMO válido (dígito de control correcto)':'✖ IMO no válido (dígito de control incorrecto)'):'IMO vacío (opcional en embarcaciones pequeñas)');
+if(c&&$('vf').value&&c.toLowerCase()!=$('vf').value.toLowerCase())o.push('⚠ La bandera no coincide con el MID del MMSI');
+$('vres').innerHTML=o.join('<br>')+'<br>Es una validación de formato. La confirmación oficial exige consultar el registro (ITU/IMO/Capitanía) con conexión.'};
+$('vgps').onclick=()=>{try{navigator.geolocation.getCurrentPosition(p=>{S.lat=p.coords.latitude;S.lon=p.coords.longitude;S.x=S.y=0;coords();
+DB.vessel.dev={ua:navigator.userAgent.slice(0,60),acc:Math.round(p.coords.accuracy),t:Date.now(),by:ROLE};save();
+$('vres').innerHTML='✔ Dispositivo registrado a bordo · precisión ±'+DB.vessel.dev.acc+' m · '+new Date().toLocaleTimeString()},()=>{$('vres').textContent='✖ No se pudo obtener la ubicación del dispositivo'})}catch(e){$('vres').textContent='✖ GPS no disponible'}};
+$('tstart').onclick=()=>{if(!can('trip'))return;if(DB.voy&&!DB.voy.end){$('vstat').innerHTML='<p class="er">Ya hay un viaje en curso: finalízalo antes de iniciar otro.</p>';return}saveForm();if(DB.voy)(DB.arch=DB.arch||[]).push({voy:DB.voy,log:DB.log,ex:DB.ex,crew:DB.crew});
+DB.voy={start:Date.now(),end:0,sec:0,nm:0,max:0,hs:0,al:0,n:0,acc:0,trk:[],o:$('vo').value||(S.port&&S.port.n)||'',d:$('vd').value,by:ROLES[ROLE]};DB.log=[];save();vstat()};
+$('tstop').onclick=()=>{if(DB.voy&&!DB.voy.end&&can('trip')){saveForm();DB.voy.end=Date.now();DB.voy.sealed=true;save();openVoy()}};
+$('tlog').onclick=()=>{const t=$('vlg').value.trim();if(t&&can('log')&&DB.voy&&!DB.voy.end){const l={t:Date.now(),by:ROLES[ROLE],tx:t,pos:$('lat').textContent+' '+$('lon').textContent};$('vlg').value='';sha((DB.log.length?DB.log[DB.log.length-1].h:'')+JSON.stringify(l)).then(h=>{l.h=h;DB.log.push(l);save();vstat()})}};
+function trip(dt){const v=DB.voy;if(!v||v.end||S.guest)return;const s=dt*(S.real?1:30);/* demo: tiempo x30; con GPS real usar x1 */
+if(S.sp>.5){v.sec+=s;v.nm+=S.sp*s/3600;v.max=Math.max(v.max,S.sp)}
+v.acc+=dt;if(v.acc>2){v.acc=0;v.hs=Math.max(v.hs,waveAt(S.x,S.y,S.t));v.trk.push([+(S.lat+S.y/60).toFixed(5),+(S.lon+S.x/(60*Math.cos(S.lat*D2R))).toFixed(5)]);if(v.trk.length>600)v.trk.shift();if(++v.n%15==0)save()}}
+function vstat(){const v=DB.voy,R=(a,b)=>`<div class='row'><span>${a}</span><b>${b}</b></div>`;
+$('vstat').innerHTML=v?R('Estado',v.end?'Finalizado':'En curso')+R('Distancia',v.nm.toFixed(1)+' NM')+R('Tiempo navegando',fmt(v.sec))+R('Vel. media / máx.',(v.sec?v.nm/(v.sec/3600):0).toFixed(1)+' / '+v.max.toFixed(1)+' kn')+R('Ola máx. registrada',v.hs.toFixed(1)+' m')+R('Alertas de peligro',v.al)+R('Anotaciones',DB.log.length):'<p class=\"note\">Sin viaje iniciado.</p>'}
+setInterval(()=>{if($('voy').style.display=='block')vstat()},1000);
+$('tcert').onclick=async()=>{saveForm();const v=DB.voy,b=DB.vessel,e=DB.ex||{};if(!v){$('vstat').innerHTML='<p class=\"er\">Inicia un viaje para poder emitir el certificado.</p>';return}
+const f0=+e.f0||0,f1=+e.f1||0,used=f0&&f1?f0-f1:null,tb="style='width:100%;border-collapse:collapse'",R=(a,c)=>`<tr><td style='padding:4px 8px;border:1px solid #bbb;width:38%'><b>${a}</b></td><td style='padding:4px 8px;border:1px solid #bbb'>${c===''||c==null?'—':c}</td></tr>`;
+const crew=(DB.crew||'').split(String.fromCharCode(10)).filter(Boolean).map(x=>'<li>'+esc(x)+'</li>').join('')||'<li>—</li>';
+const log=DB.log.map(l=>R(new Date(l.t).toLocaleString()+' · '+esc(l.by),esc(l.tx)+'<br><small>'+esc(l.pos)+'</small>')).join('')||R('—','Sin anotaciones');
+const body=`<h3>Buque</h3><table ${tb}>${R('Nombre',esc(b.name))}${R('Bandera',esc(b.flag))}${R('MMSI / IMO',esc(b.mmsi)+' / '+esc(b.imo))}${R('Indicativo / Tipo',esc(b.call)+' / '+esc(b.type))}</table>
+<h3>Viaje</h3><table ${tb}>${R('Origen → Destino',esc(v.o)+' → '+esc(v.d))}${R('Salida',new Date(v.start).toLocaleString())}${R('Llegada',v.end?new Date(v.end).toLocaleString():'En curso')}${R('Distancia navegada',v.nm.toFixed(1)+' NM')}${R('Tiempo de navegación',fmt(v.sec))}${R('Velocidad media / máxima',(v.sec?v.nm/(v.sec/3600):0).toFixed(1)+' / '+v.max.toFixed(1)+' kn')}${R('Ola máxima registrada',v.hs.toFixed(1)+' m')}${R('Alertas de peligro',v.al)}${R('Puntos de derrota',v.trk.length)}${R('Integridad de la bitácora',await chainOk()?'✔ íntegra (cadena de sellos verificada)':'✖ ALTERADA')}</table>
+<h3>Combustible y suministros</h3><table ${tb}>${R('Inicio / Fin',(f0||'—')+' / '+(f1||'—')+' L')}${R('Consumo',used!=null?used+' L'+(v.nm?' ('+(used/v.nm).toFixed(2)+' L/NM)':''):'')}${R('Agua dulce',esc(e.w))}${R('Pasajeros / carga',esc(e.pax))}</table>
+<h3>Tripulación</h3><ol>${crew}</ol><h3>Bitácora</h3><table ${tb}>${log}</table><h3>Observaciones</h3><p>${esc(e.ob)||'—'}</p>`;
+const id='NM-'+(await sha(body)).slice(0,12).toUpperCase(),html=`<div style='max-width:780px;margin:auto;font-family:Georgia,serif'><h1 style='text-align:center;margin:0'>⚓ CERTIFICADO DE VIAJE</h1><p style='text-align:center'>Nº ${id} · Emitido ${new Date().toLocaleString()} por ${ROLES[ROLE]}</p>${body}<div style='display:flex;justify-content:space-between;margin-top:50px'><div>______________________<br>Capitán</div><div>______________________<br>Armador / Autoridad</div></div><p style='font-size:11px;color:#555'>Sello de integridad ${id} (resumen SHA-256 del contenido). Documento generado por NaviMar: no sustituye al diario de navegación oficial.</p>
+<div class='noprint' style='margin-top:14px'><button id='cp'>🖨 Imprimir / PDF</button> <button id='cd'>⬇ Descargar .html</button> <button id='cj'>⬇ Datos .json</button> <button id='cc'>✕ Cerrar</button></div></div>`;
+$('cert').innerHTML=html;$('cert').classList.add('show');
+const dl=(n,t,c)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:t}));a.download=n;a.click()};
+$('cp').onclick=()=>window.print();$('cc').onclick=()=>$('cert').classList.remove('show');
+$('cd').onclick=()=>dl(id+'.html','text/html','<meta charset=utf-8><title>'+id+'</title>'+html);
+$('cj').onclick=()=>dl(id+'.json','application/json',JSON.stringify({id,vessel:b,voyage:v,extra:e,crew:DB.crew,log:DB.log}))};
+async function sync(){if(!CFG.SYNC_URL||!navigator.onLine||!ROLE)return;const id=DB.vessel.mmsi||'seven-marlin';
+try{if(ROLE!='inv'){if(S.real&&!S.fix)return;const v=DB.voy||{};await fetch(CFG.SYNC_URL+'?id='+id,{method:'POST',headers:H(),body:JSON.stringify({lat:S.lat+S.y/60,lon:S.lon+S.x/(60*Math.cos(S.lat*D2R)),cog:S.hd,sog:S.sp,st:S.anchor?'Fondeado':S.sp<.5?'Parado':'Navegando',acc:S.acc,name:DB.vessel.name,co:DB.vessel.co,trip:{nm:v.nm,sec:v.sec,max:v.max,o:v.o,d:v.d,end:v.end},route:wpts})})}
+else{const r=await(await fetch(CFG.SYNC_URL+'?id='+id,{headers:H()})).json();if(!r.lat)return;if(!S.fix){S.lat=r.lat;S.lon=r.lon;S.x=S.y=0;S.fix=1}
+S.x=(r.lon-S.lon)*60*Math.cos(S.lat*D2R);S.y=(r.lat-S.lat)*60;S.hd=r.cog;S.sp=r.sog;S.tr=r.trk||[];wpts=r.route||[];drawRoute2();trkCard(r);$('rolechip').textContent='👁 Invitado · posición de '+new Date(r.t).toLocaleTimeString()}}catch(e){}}
+setInterval(sync,5000);
+// ---------- alarmas por perfil, consejos y notificaciones ----------
+const RANK={cap:3,pri:2,gua:1,inv:0},SEV={cap:1.5,pri:1.5,gua:1,inv:1};
+DB.alarm=Object.assign({bv:3,bl:1,md:8},DB.alarm||{});DB.own=DB.own||{};
+function applyAlarm(){const k=SEV[ROLE]||1;S.rv=S.bv*k;S.rl=S.bl*k}
+function canAlarm(v,key){const cur=DB.alarm[key=='rv'?'bv':'bl'];return ROLE=='cap'||(ROLE=='pri'&&v>=cur)}
+function alarmSave(){DB.alarm={bv:S.bv,bl:S.bl,md:S.md};save()}
+function roleInit(){S.bv=DB.alarm.bv;S.bl=DB.alarm.bl;S.md=DB.alarm.md;applyAlarm();
+$('rv').textContent=S.bv;$('lv').textContent=S.bl;$('md').value=S.md;$('mv').textContent=S.md;
+[['rbv',S.bv],['rbl',S.bl]].forEach(a=>$(a[0]).querySelectorAll('button[data-r]').forEach(x=>x.classList.toggle('on',+x.dataset.r===a[1])));
+if(ROLE=='gua'||ROLE=='inv')document.querySelectorAll('#rbv button,#rbl button,#rc,#lc,#md').forEach(e=>e.disabled=true);
+if(ROLE!='inv'){S.snd=true;$('snd').textContent='🔔 Sonido: sí';$('snd').classList.add('on');try{ac=ac||new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}}
+function rayClear(h,L){for(let r=.1;r<=L;r+=.1)if(depthAt(S.x+Math.sin(h*D2R)*r,S.y+Math.cos(h*D2R)*r)<S.md)return false;return true}
+function cpaAt(v,h){const dx=v.x-S.x,dy=v.y-S.y,vx=Math.sin(v.hd*D2R)*v.sp-Math.sin(h*D2R)*S.sp,vy=Math.cos(v.hd*D2R)*v.sp-Math.cos(h*D2R)*S.sp,v2=vx*vx+vy*vy,tc=v2>.01?Math.max(0,-(dx*vx+dy*vy)/v2):0;return Math.hypot(dx+vx*tc,dy+vy*tc)}
+function advise(rows){const thr=rows.filter(r=>r.d<=S.rv&&r.cpa<S.rv*.5),land=S.hit;if(!thr.length&&!land)return null;
+const safe=Math.max(.5,S.rv*.4),L=Math.max(S.rl,1)*1.5,ok=h=>rayClear(h,L)&&thr.every(r=>cpaAt(r.v,h)>=safe);let h=null,txt='';
+for(const a of [10,20,30,45,60,90,120]){for(const sd of [1,-1]){const c=(S.hd+sd*a+360)%360;if(ok(c)){h=c;txt=(sd>0?'Gira a estribor ':'Gira a babor ')+a+'° → rumbo '+Math.round(c)+'°';break}}if(h!=null)break}
+if(h==null)return{h:null,txt:'Reduce velocidad o para máquinas, busca aguas abiertas y avisa al capitán.'};
+const t=thr[0];if(t){const rel=(t.b-S.hd+360)%360;txt+=rel<112.5?'. Cedes el paso: no cruces por su proa':rel>247.5?'. Tienes preferencia: mantén velocidad salvo peligro inminente':'. Te alcanza por popa: mantén rumbo y no estorbes'}
+if(land&&!t)txt+='. Aléjate de tierra/bajos';if(thr.some(r=>r.cpa<.3))txt+=' y reduce velocidad';return{h,txt}}
+function drawAdv(){const a=S.adv;if(!a||a.h==null)return;const q=toPx(S.x,S.y),L=toPx(S.x+3,S.y)[0]-q[0];cx.save();cx.translate(q[0],q[1]);cx.rotate(a.h*D2R);cx.strokeStyle='#39e07a';cx.lineWidth=4;cx.setLineDash([12,8]);cx.beginPath();cx.moveTo(0,-16);cx.lineTo(0,-L);cx.stroke();cx.setLineDash([]);cx.fillStyle='#39e07a';cx.beginPath();cx.moveTo(0,-L-14);cx.lineTo(8,-L);cx.lineTo(-8,-L);cx.fill();cx.restore()}
+function notify(t,b){if(!('Notification' in window)||Notification.permission!='granted')return;const o={body:b,tag:'navimar-alert',renotify:true,requireInteraction:true,vibrate:[500,150,500],icon:'icon.svg'};
+try{if(navigator.serviceWorker&&navigator.serviceWorker.controller)navigator.serviceWorker.ready.then(r=>r.showNotification(t,o));else new Notification(t,o)}catch(e){}}
+async function relay(m){if(!CFG.PUSH_URL||!navigator.onLine)return;try{await fetch(CFG.PUSH_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'alert',vessel:DB.vessel.mmsi||'demo',from:ROLE,msg:m,t:Date.now()})})}catch(e){}}
+function fx(msgs,ad,fresh){$('map').parentNode.classList.toggle('flash',S.beepNeed&&ROLE=='gua');if(!fresh)return;
+const txt=(msgs.find(m=>m[0]=='d')||[0,''])[1]+(ad?'. '+ad.txt:'');notify('⚠ NaviMar · PELIGRO',txt);
+try{navigator.vibrate&&navigator.vibrate(ROLE=='gua'?[500,150,500,150,800]:[300,150,300])}catch(e){}
+if(ROLE=='gua'&&window.speechSynthesis){try{const u=new SpeechSynthesisUtterance('Atención. '+txt);u.lang='es-ES';speechSynthesis.speak(u)}catch(e){}}relay(txt)}
+function b64(x){const r=atob((x+'='.repeat((4-x.length%4)%4)).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,c=>c.charCodeAt(0))}
+$('ntf').onclick=async()=>{try{const p=await Notification.requestPermission();$('ntf').textContent='📲 Notificaciones: '+(p=='granted'?'sí':'no');$('ntf').classList.toggle('on',p=='granted');
+if(p=='granted'&&CFG.PUSH_KEY&&CFG.PUSH_URL&&navigator.serviceWorker){const r=await navigator.serviceWorker.ready,sub=await r.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(CFG.PUSH_KEY)});
+await fetch(CFG.PUSH_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'subscribe',vessel:DB.vessel.mmsi||'demo',role:ROLE,sub})})}}catch(e){}};
+let wlk=null;$('wl').onclick=async()=>{try{if(wlk){await wlk.release();wlk=null}else wlk=await navigator.wakeLock.request('screen');$('wl').textContent='☀ Pantalla activa: '+(wlk?'sí':'no');$('wl').classList.toggle('on',!!wlk)}catch(e){$('wl').textContent='☀ No disponible'}};
+document.addEventListener('visibilitychange',async()=>{if(!document.hidden&&$('wl').classList.contains('on')){try{wlk=await navigator.wakeLock.request('screen')}catch(e){}}});
+async function chainOk(){let p='';for(const l of DB.log){const r=Object.assign({},l);delete r.h;if(await sha(p+JSON.stringify(r))!==l.h)return false;p=l.h}return true}
+// ---------- MODO REAL: mapa Leaflet, GPS, AIS real y seguimiento ----------
+if(CFG.SERVER){CFG.AIS_URL=CFG.SERVER+'/vessels';CFG.SYNC_URL=CFG.SERVER+'/pos'}
+const KEY=()=>{try{return localStorage.getItem('nm_key')||''}catch(e){return ''}};
+const H=()=>({'Content-Type':'application/json','x-token':KEY()});
+const TA=c=>c==30?'Pesquero':c>=36&&c<=37?'Recreo/Vela':c>=60&&c<=69?'Pasajeros':c>=70&&c<=79?'Carguero':c>=80&&c<=89?'Petrolero':c==52?'Remolcador':'Buque';
+let LM=null,shipMk=null,trL=null,ring=null,ancC=null,routeL=null,wpts=[],mk={};S.tr=[];$('srvk').value=KEY();
+function icon(c,hd){return L.divIcon({className:'',iconSize:[22,22],iconAnchor:[11,11],html:'<svg width="22" height="22" viewBox="-11 -11 22 22" style="transform:rotate('+hd+'deg)"><path d="M0-10L7 8 0 4-7 8Z" fill="'+c+'" stroke="#000" stroke-width="1.5"/></svg>'})}
+function setReal(on){if(on&&!window.L){$('asrc').textContent='⚠ Mapa real no disponible: Leaflet no cargó (sin internet o vista previa restringida).';return}
+if(!on){location.reload();return}
+S.real=true;$('map').style.visibility='hidden';$('lmap').style.display='block';$('legend').style.display='none';$('rmode').classList.add('on');
+initMap();V.length=0;if(!S.guest)watch();
+$('asrc').textContent=CFG.AIS_URL?'AIS real vía tu servidor (radio 30 NM). Alertas de tierra y bajos desactivadas: faltan datos de batimetría o sonda.':'Modo real sin servidor: configura CFG.SERVER para ver buques reales.';aisRefresh()}
+function initMap(){if(LM){LM.invalidateSize();return}
+LM=L.map('lmap').setView([18.8,-70.2],8);
+const T=(u,o)=>L.tileLayer(u,Object.assign({maxZoom:18},o||{}));
+const b1=T('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',attribution:'© OpenStreetMap © CARTO'}),
+b2=T('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',{maxZoom:13,attribution:'© Esri, GEBCO, NOAA'}),
+b3=T('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'© Esri'}),
+o1=T('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',{attribution:'© OpenSeaMap'}),
+o2=L.tileLayer.wms('https://ows.emodnet-bathymetry.eu/wms',{layers:'emodnet:mean_atlas_land',format:'image/png',transparent:true,opacity:.7,attribution:'© EMODnet'});
+b1.addTo(LM);o1.addTo(LM);
+L.control.layers({'Mapa (países, ríos, canales)':b1,'Carta oceánica (fondos)':b2,'Satélite':b3},{'Balizas y cartas náuticas (OpenSeaMap)':o1,'Batimetría Europa (EMODnet)':o2}).addTo(LM);
+LM.on('click',e=>{if(!can('crew'))return;wpts.push([e.latlng.lat,e.latlng.lng]);drawRoute2()});
+LM.on('contextmenu',()=>{if(can('crew')){wpts.pop();drawRoute2()}})}
+function drawRoute2(){if(!LM)return;if(routeL)LM.removeLayer(routeL);routeL=null;if(wpts.length<2)return;let d=0;for(let i=1;i<wpts.length;i++)d+=LM.distance(wpts[i-1],wpts[i])/1852;
+const k=Math.max(S.sp,6);routeL=L.polyline(wpts,{color:'#ffd400',weight:3,dashArray:'8 6'}).addTo(LM).bindTooltip(d.toFixed(1)+' NM · ETA '+fmt(d/k*3600)+' a '+k.toFixed(0)+' kn',{sticky:true})}
+function watch(){if(S.wid||!navigator.geolocation)return;S.wid=navigator.geolocation.watchPosition(p=>{const c=p.coords;
+if(!S.fix){S.lat=c.latitude;S.lon=c.longitude;S.fix=1;V.length=0;aisRefresh()}
+S.x=(c.longitude-S.lon)*60*Math.cos(S.lat*D2R);S.y=(c.latitude-S.lat)*60;if(c.heading!=null&&!isNaN(c.heading)&&(c.speed||0)>.5)S.hd=c.heading;
+S.sp=Math.max(0,(c.speed||0)*1.94384);S.acc=Math.round(c.accuracy)},()=>{$('asrc').textContent='⚠ Sin permiso de ubicación: actívalo en el navegador'},{enableHighAccuracy:true,maximumAge:2000,timeout:20000})}
+function trkCard(r){const t=r.trip||{};$('trk').innerHTML=`<div class='row'><b>${esc(r.name||'Seven Marlin')}</b><span>${esc(r.co||'Chip Seven')}</span></div><div class='row'><span>Estado</span><b>${esc(r.st)}</b></div><div class='row'><span>Posición</span><b>${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}</b></div><div class='row'><span>Rumbo / velocidad</span><b>${Math.round(r.cog)}° / ${r.sog.toFixed(1)} kn</b></div>${t.o||t.d?`<div class='row'><span>Ruta</span><b>${esc(t.o)} → ${esc(t.d)}</b></div>`:''}<div class='row'><span>Recorrido</span><b>${(t.nm||0).toFixed(1)} NM · ${fmt(t.sec||0)}</b></div><div class='row'><span>Último dato</span><b>${new Date(r.t).toLocaleTimeString()}</b></div>`}
+function rmap(){if(!S.real||!LM||(!S.fix&&!S.guest))return;const la=S.lat+S.y/60,lo=S.lon+S.x/(60*Math.cos(S.lat*D2R)),ll=[la,lo],now=Date.now();
+if(!shipMk)shipMk=L.marker(ll,{icon:icon('#2fd0c4',S.hd),zIndexOffset:1000}).addTo(LM).bindTooltip(DB.vessel.name||'Mi buque',{permanent:true,direction:'right'});
+shipMk.setLatLng(ll).setIcon(icon('#2fd0c4',S.hd));if(!S.centered){LM.setView(ll,12);S.centered=1}
+if(!ring)ring=L.circle(ll,{radius:1852,color:'#5dd6ff',weight:2,dashArray:'4 6',fill:false}).addTo(LM);ring.setLatLng(ll).setRadius(S.rv*1852);
+if(!S.guest&&now-(S.lt||0)>10000){S.tr.push(ll);S.lt=now;if(S.tr.length>1500)S.tr.shift()}
+if(!trL)trL=L.polyline([],{color:'#2fd0c4',weight:3}).addTo(LM);trL.setLatLngs(S.tr);
+if(S.sp<.5){S.still=S.still||now;if(!S.anchor&&now-S.still>120000)S.anchor={la,lo,r:.08}}else if(S.sp>=1.5){S.still=0;S.anchor=null}
+S.drag=!!(S.anchor&&LM.distance(ll,[S.anchor.la,S.anchor.lo])>S.anchor.r*1852);
+if(S.anchor){if(!ancC)ancC=L.circle([S.anchor.la,S.anchor.lo],{radius:S.anchor.r*1852,color:'#4da3ff',weight:2,dashArray:'3 4'}).addTo(LM).bindTooltip('⚓ Fondeo',{permanent:true});ancC.setLatLng([S.anchor.la,S.anchor.lo])}else if(ancC){LM.removeLayer(ancC);ancC=null}
+const seen={};V.forEach(v=>{const k=v.mmsi||v.n,p=[S.lat+v.y/60,S.lon+v.x/(60*Math.cos(S.lat*D2R))],key=Math.round(v.hd/5)+(S.near.has(v.n)?'r':'');seen[k]=1;let m=mk[k];
+if(!m)m=mk[k]=L.marker(p,{icon:icon(v.c,v.hd)}).addTo(LM).bindTooltip('x');m.setLatLng(p);if(m._k!==key){m.setIcon(icon(S.near.has(v.n)?'#ff5d5d':v.c,v.hd));m._k=key}m.setTooltipContent(v.n+' · '+v.t+' · '+v.sp.toFixed(1)+' kn')});
+for(const k in mk)if(!seen[k]){LM.removeLayer(mk[k]);delete mk[k]}
+if(!S.guest)trkCard({name:DB.vessel.name,co:DB.vessel.co,st:S.anchor?'Fondeado':S.sp<.5?'Parado':'Navegando',lat:la,lon:lo,cog:S.hd,sog:S.sp,t:now,trip:DB.voy||{}})}
+$('rmode').onclick=()=>setReal(!S.real);$('ctr').onclick=()=>{if(LM&&S.real)LM.setView([S.lat+S.y/60,S.lon+S.x/(60*Math.cos(S.lat*D2R))],13)};
+setInterval(aisRefresh,15000);setInterval(rmap,1000);
 try{S.wx=JSON.parse(localStorage.getItem("nm_wx"))}catch(e){S.wx=null}
 addEventListener("online",()=>{net();wxRefresh();aisRefresh()});addEventListener("offline",net);
 setInterval(()=>{wxRefresh();aisRefresh()},600000);$("wrf").onclick=()=>{wxRefresh();aisRefresh()};
